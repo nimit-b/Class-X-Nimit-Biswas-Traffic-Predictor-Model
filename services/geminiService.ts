@@ -1,17 +1,14 @@
 
-import { PredictionResult, ChartPoint, TrafficBreakdown, RouteStats, RouteSegment } from "../types";
+import { PredictionResult, ChartPoint, RouteStats, RouteComposition, DetailedWeather } from "../types";
 
-const DEFAULT_API_KEY = "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";
+const DEFAULT_OPENROUTER_KEY = "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";
 
-// Helper to ensure we always have chart data
 function generateFallbackChartData(baseLevel: string, startHour: number): ChartPoint[] {
   const baseValue = baseLevel === 'Severe' ? 90 : baseLevel === 'High' ? 75 : baseLevel === 'Moderate' ? 50 : 20;
   const data: ChartPoint[] = [];
-  
   for (let i = 0; i < 5; i++) {
     const hour = (startHour + i) % 24;
     const timeStr = `${hour.toString().padStart(2, '0')}:00`;
-    // Add some random variance to make it look real
     const variance = Math.floor(Math.random() * 15) - 7; 
     data.push({
       time: timeStr,
@@ -24,196 +21,249 @@ function generateFallbackChartData(baseLevel: string, startHour: number): ChartP
 function analyzeTimeContext(dateStr: string): { context: string, startHour: number, readableDate: string } {
   const date = new Date(dateStr);
   const hour = date.getHours();
-  const day = date.getDay(); // 0 = Sun, 6 = Sat
+  const day = date.getDay(); // 0 = Sun
   
-  // Get human readable date (e.g., "Monday, December 25")
-  const readableDate = date.toLocaleDateString('en-US', { 
-    weekday: 'long', 
-    month: 'long', 
-    day: 'numeric' 
-  });
-
+  const readableDate = date.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
   const isWeekend = day === 0 || day === 6;
+  
   let timeOfDay = "Mid-day";
-  let isRushHour = false;
-
-  if (hour >= 6 && hour <= 9) {
-    timeOfDay = "Morning Commute";
-    if (!isWeekend) isRushHour = true;
-  } else if (hour >= 16 && hour <= 19) {
-    timeOfDay = "Evening Commute";
-    if (!isWeekend) isRushHour = true;
-  } else if (hour > 19 || hour < 5) {
-    timeOfDay = "Night";
-  }
+  if (hour >= 6 && hour <= 9) timeOfDay = "Morning Commute";
+  else if (hour >= 16 && hour <= 19) timeOfDay = "Evening Commute";
+  else if (hour > 19 || hour < 5) timeOfDay = "Night";
 
   return {
-    context: `Specific Date: ${readableDate}. Time of Day: ${timeOfDay} (${hour}:00). Standard Day Type: ${isWeekend ? "Weekend" : "Weekday"}. Base Rush Hour Status (ignoring holidays): ${isRushHour ? "ACTIVE" : "Inactive"}.`,
+    context: `Time: ${hour}:00 (${timeOfDay}). Day: ${readableDate} (${isWeekend ? "Weekend" : "Weekday"}).`,
     startHour: hour,
     readableDate: readableDate
   };
+}
+
+/**
+ * Clean raw JSON string from common LLM formatting errors
+ */
+function sanitizeJsonString(str: string): string {
+  // 1. Remove Markdown code blocks if present
+  let clean = str.replace(/```json\s*/g, "").replace(/```\s*$/g, "").replace(/```/g, "");
+  
+  // 2. Remove invisible control characters (0x00-0x1F) except newline, tab, return
+  clean = clean.replace(/[\x00-\x09\x0B-\x1F\x7F]/g, "");
+  
+  // 3. Fix "Bad escaped character" errors
+  // JSON allows \", \\, \/, \b, \f, \n, \r, \t, \uXXXX
+  // This regex finds backslashes NOT followed by those valid chars and escapes them.
+  // We use a negative lookahead (?!...)
+  clean = clean.replace(/\\(?![/\\"'bfnrtu])/g, "\\\\");
+
+  return clean.trim();
 }
 
 export async function predictTraffic(
   origin: string, 
   destination: string, 
   datetime: string,
-  weatherSummary: string | null,
+  weather: DetailedWeather | null,
   routeStats: RouteStats | undefined,
-  userApiKey?: string
+  routeComposition: RouteComposition | undefined,
+  userApiKey?: string,
+  provider: string = 'openrouter'
 ): Promise<PredictionResult> {
   
-  // Logic: Use user key if provided and not empty. Otherwise use default.
   const isUsingCustomKey = userApiKey && userApiKey.trim().length > 0;
-  const apiKey = isUsingCustomKey ? userApiKey : DEFAULT_API_KEY;
+  let apiKey = isUsingCustomKey ? userApiKey : DEFAULT_OPENROUTER_KEY;
   
-  const model = "google/gemini-2.0-flash-001"; 
-  
+  if (!isUsingCustomKey && provider !== 'openrouter') {
+      throw new Error(`Please enter a valid API Key for ${provider} in the settings.`);
+  }
+
   const { context: timeContext, startHour, readableDate } = analyzeTimeContext(datetime);
   
-  // Generate specific time labels for the AI to fill in
   const next5Hours = Array.from({length: 5}, (_, i) => {
     const h = (startHour + i) % 24;
     return `${h.toString().padStart(2, '0')}:00`;
   }).join(", ");
 
-  const weatherContext = weatherSummary 
-    ? `Real-time Weather: ${weatherSummary}. (Note: Rain/Snow reduces capacity by 15-30%.)` 
-    : "Weather data unavailable. Assume clear conditions.";
+  // Granular Weather Context
+  let weatherContext = "Data Unavailable. Assume Standard Conditions.";
+  if (weather) {
+      weatherContext = `
+        Condition: ${weather.description} (Code: ${weather.conditionCode}).
+        Temp: ${weather.temperature}°C. 
+        Precipitation Chance: ${weather.precipitationChance}%.
+        Wind: ${weather.windSpeed} km/h.
+        Daylight: ${weather.isDay ? "Yes" : "No"}.
+      `;
+  }
 
-  let routeContext = "";
-  if (routeStats) {
+  // Detailed Route Context
+  let routeContext = "Route geometry unavailable.";
+  if (routeStats && routeComposition) {
     const km = (routeStats.distanceMeters / 1000).toFixed(1);
     const baseMins = Math.round(routeStats.durationSeconds / 60);
-    routeContext = `Route Physical Distance: ${km} km. Base Driving Time (No Traffic): ${baseMins} minutes.`;
-  } else {
-    routeContext = "Precise route distance unavailable.";
+    routeContext = `
+      Distance: ${km} km. 
+      Free-Flow Duration: ${baseMins} min.
+      Composition: ${routeComposition.percentHighway}% Highway / ${routeComposition.percentUrban}% Urban.
+      Major Roads: ${routeComposition.majorRoadNames.join(", ")}.
+    `;
   }
 
   const prompt = `
-    You are a Master Traffic Analyst and Urban Planner. 
-    Perform a deep-dive analysis for a trip from "${origin}" to "${destination}".
+    ACT AS A SENIOR TRAFFIC ENGINEER AND DATA SCIENTIST.
+    Perform a rigorous calculated analysis for a trip from "${origin}" to "${destination}".
 
-    INPUT DATA:
-    1. ROUTE: ${routeContext}
-    2. CONTEXT: ${timeContext}
-    3. WEATHER: ${weatherContext}
+    --- INPUT DATA ---
+    1. TIMING: ${timeContext}
+    2. ROUTE PHYSICS: ${routeContext}
+    3. HOURLY WEATHER: ${weatherContext}
 
-    CRITICAL INSTRUCTION - HOLIDAY & FESTIVAL LOGIC:
-    Check the "Specific Date" provided above ("${readableDate}").
-    - Does this date correspond to a MAJOR PUBLIC HOLIDAY (e.g., Christmas, New Year's, Thanksgiving, Eid, Diwali, Independence Day) or a localized festival in the region?
-    - IF YES: Ignore standard "Rush Hour" logic. 
-      -> Morning commute will be EMPTY.
-      -> Mid-day traffic near shopping centers/malls/places of worship will be HIGH.
-      -> Evening traffic might be severe due to parties/gatherings.
-    - IF NO: Proceed with standard weekday/weekend patterns.
+    --- CALCULATION LOGIC (MENTAL SANDBOX) ---
+    Apply the following multipliers to the "Free-Flow Duration":
+    1. **Base Rush Hour**: +40-80% for Commute times on Weekdays (Urban), +10-20% (Highway).
+    2. **Weather Penalty**: 
+       - Rain: +15% (Urban), +25% (Highway - spray/visibility).
+       - Snow/Ice: +60% (Urban), +40% (Highway - plowing usually better on highways).
+       - Sun Glare (Morning/Evening): +5-10%.
+    3. **Holiday/Event**: Check specific date "${readableDate}". If Major Holiday, reverse rush hour logic.
+    4. **Road Type**: High % Urban = more susceptible to gridlock variables. High % Highway = susceptible to single accident delays.
 
-    TASK:
-    Generate a detailed JSON response assessing traffic conditions.
-
-    CRITICAL OUTPUT REQUIREMENTS:
-    1. "summary": A detailed Markdown string. It MUST specifically mention if the date is a holiday or special event and how that changes the prediction.
-       - Format: "### 📅 Date Context: [Is it a special day?]" followed by the verdict.
-       - Provide specific advice based on the day (e.g., "Since it is Christmas, avoid routes near malls").
+    --- REQUIRED OUTPUT (JSON) ---
+    You must output ONLY valid JSON inside a code block. Do NOT include trailing commas.
     
-    2. "chartData": You MUST provide exactly 5 data points for the following times: [${next5Hours}].
-       Each point must be: { "time": "HH:MM", "congestionLevel": 0-100 }. 
-       0 = Empty Road, 100 = Gridlock.
-    
-    3. "routeSegments": Break the route into segments (Start, Middle, End).
-       - If it is a holiday, routes near residential areas might be clear, but city centers blocked. Reflect this in segment colors.
-
-    Required JSON Structure:
+    Structure:
     {
-      "travelTime": "e.g. 1 hr 15 mins",
+      "travelTime": "Calculated string (e.g. 1 hr 24 min)",
       "congestionLevel": "Low" | "Moderate" | "High" | "Severe",
-      "summary": "### 📅 Date Context: Christmas Day ... \n\n ### 🚦 Verdict: ... \n\n ### 📍 Analysis ... \n\n ### Temperature Could expectedly be xxC or yyF",
+      "confidenceScore": number (0-100, based on data quality),
+      "safetyScore": number (0-100, deduct for rain/night/wind),
+      "summary": "### 📊 Engineer's Verdict\n\n[Markdown analysis including the calculated delay factors...]",
       "routeSegments": [
         { "segmentId": 1, "startPercentage": 0, "endPercentage": 30, "congestionLevel": "High" },
         { "segmentId": 2, "startPercentage": 30, "endPercentage": 100, "congestionLevel": "Low" }
       ],
-      "chartData": [ 
-        { "time": "14:00", "congestionLevel": 45 },
-        { "time": "15:00", "congestionLevel": 60 } 
-      ],
+      "chartData": [ { "time": "HH:MM", "congestionLevel": 0-100 } for times: ${next5Hours} ],
       "trafficBreakdown": [
-         {"name": "Base Route", "value": 50, "fill": "#6366f1"},
-         {"name": "Holiday Impact", "value": 30, "fill": "#f59e0b"},
-         {"name": "Weather", "value": 20, "fill": "#0ea5e9"}
+         {"name": "Base Distance", "value": 50, "fill": "#6366f1"},
+         {"name": "Rush Hour", "value": 20, "fill": "#f59e0b"},
+         {"name": "Weather Delay", "value": 10, "fill": "#0ea5e9"}
+      ],
+      "alternatives": [
+         { "name": "Alternative A", "time": "...", "description": "..." },
+         { "name": "Alternative B", "time": "...", "description": "..." }
       ]
     }
-    
-    Wrap the JSON in a code block labeled 'json'.
   `;
 
   try {
-    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+    let url = '';
+    let headers: any = { "Content-Type": "application/json" };
+    let body: any = {};
+
+    if (provider === 'openai') {
+      url = "https://api.openai.com/v1/chat/completions";
+      headers["Authorization"] = `Bearer ${apiKey}`;
+      body = {
+        model: "gpt-4o-mini", 
+        messages: [{ role: "user", content: prompt }],
+        temperature: 0.2, // Lower temperature for more analytical/math-based results
+        max_tokens: 2000
+      };
+    } else if (provider === 'gemini') {
+       url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+       body = { contents: [{ parts: [{ text: prompt }] }] };
+    } else {
+      url = "https://openrouter.ai/api/v1/chat/completions";
+      headers["Authorization"] = `Bearer ${apiKey}`;
+      headers["HTTP-Referer"] = window.location.origin;
+      headers["X-Title"] = "OmniFlow Traffic App";
+      body = {
+        model: "google/gemini-2.0-flash-001",
+        messages: [{ role: "user", content: prompt }],
+        temperature: 0.2,
+        max_tokens: 2000
+      };
+    }
+
+    const response = await fetch(url, {
       method: "POST",
-      headers: {
-        "Authorization": `Bearer ${apiKey}`,
-        "HTTP-Referer": window.location.origin, // Dynamic origin for CORS/Referer
-        "X-Title": "OmniFlow Traffic App", 
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        model: model,
-        messages: [{ role: "user", content: prompt }]
-      })
+      headers: provider === 'gemini' ? { "Content-Type": "application/json" } : headers,
+      body: JSON.stringify(body)
     });
 
     if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      
-      if (response.status === 401) {
-        if (isUsingCustomKey) {
-          throw new Error("Custom API Key Invalid (401). Please check your key and try again.");
-        } else {
-          throw new Error("The default system API key is invalid or expired (401). Please enter your own OpenRouter API Key in the sidebar.");
-        }
-      }
-      
-      if (response.status === 402 || response.status === 429 || (errorData.error && errorData.error.code === 402)) {
-        throw new Error("Free limit of day is ended. Please enter your own OpenRouter API key in the sidebar.");
-      }
-      
-      throw new Error(`OpenRouter API Error: ${response.status}`);
+        if (response.status === 401) throw new Error("API Key Invalid (401).");
+        if (response.status === 402 || response.status === 429) throw new Error("API Limit Reached (402/429).");
+        const errText = await response.text();
+        console.error("Provider Error:", errText);
+        throw new Error(`API Provider Error: ${response.status}`);
     }
 
     const data = await response.json();
-    const fullText = data.choices?.[0]?.message?.content || "No analysis available.";
+    let fullText = "";
+    if (provider === 'gemini') fullText = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+    else fullText = data.choices?.[0]?.message?.content || "";
+
+    // --- ROBUST PARSING LOGIC ---
     
-    // Parse JSON
+    // 1. Try to extract JSON from code blocks first
     const jsonMatch = fullText.match(/```json\s*([\s\S]*?)\s*```/);
+    let jsonString = jsonMatch ? jsonMatch[1] : fullText;
+
+    // 2. Sanitize the string to fix "Bad escaped character" errors
+    jsonString = sanitizeJsonString(jsonString);
+
     let parsedData: any = {};
 
-    if (jsonMatch && jsonMatch[1]) {
-      try {
-        parsedData = JSON.parse(jsonMatch[1]);
-      } catch (e) {
-        console.error("Failed to parse AI JSON block", e);
+    try {
+      parsedData = JSON.parse(jsonString);
+    } catch (e) {
+      console.warn("JSON Parse Failed, attempting manual repair...", e);
+      // Fallback: If strict parse fails, try to find the outermost braces and parse that sub-string
+      const firstBrace = jsonString.indexOf('{');
+      const lastBrace = jsonString.lastIndexOf('}');
+      if (firstBrace !== -1 && lastBrace !== -1) {
+          try {
+            const subStr = jsonString.substring(firstBrace, lastBrace + 1);
+            parsedData = JSON.parse(subStr); // Try parsing just the object part
+          } catch (e2) {
+             console.error("Critical JSON Parse Error", e2);
+             // As a last resort, we return a "Partial" prediction instead of crashing
+             return {
+                 summary: "### ⚠️ Parsing Error\n\nThe AI generated a response, but it was not valid JSON. Please try again.\n\nRaw Output:\n" + fullText.substring(0, 100) + "...",
+                 travelTimeEstimate: "N/A",
+                 congestionLevel: "Moderate",
+                 weatherImpact: "Unknown",
+                 eventImpact: "Unknown",
+                 chartData: [],
+                 trafficBreakdown: [],
+                 factors: [],
+                 routeLinks: [],
+                 alternatives: []
+             };
+          }
       }
     }
 
-    // Fallback Logic
     const congestionLevel = parsedData.congestionLevel || "Moderate";
     const chartData = (parsedData.chartData && parsedData.chartData.length > 0) 
       ? parsedData.chartData 
       : generateFallbackChartData(congestionLevel, startHour);
 
-    const summary = parsedData.summary || `### Analysis Unavailable\n\nWe could not generate a detailed report at this time. \n\n**Estimated Congestion:** ${congestionLevel}.`;
-
     return {
-      summary: summary,
+      summary: parsedData.summary || `### Analysis Generated\n${fullText.substring(0,100)}...`,
       travelTimeEstimate: parsedData.travelTime || "Calculating...",
       congestionLevel: congestionLevel,
-      weatherImpact: "See analysis", 
-      eventImpact: "See analysis",
-      factors: [], 
+      confidenceScore: parsedData.confidenceScore || 80,
+      safetyScore: parsedData.safetyScore || 85,
+      alternatives: parsedData.alternatives || [],
+      weatherImpact: weather ? weather.description : "Unknown",
+      eventImpact: "Analyzed",
+      factors: [],
       chartData: chartData,
       trafficBreakdown: parsedData.trafficBreakdown || [],
       routeLinks: [],
       routeStats: routeStats,
-      routeSegments: parsedData.routeSegments
+      routeSegments: parsedData.routeSegments,
+      detailedWeather: weather || undefined
     };
 
   } catch (error: any) {

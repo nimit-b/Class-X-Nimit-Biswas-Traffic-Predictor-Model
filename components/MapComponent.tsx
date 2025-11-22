@@ -1,12 +1,14 @@
+
 import React, { useEffect, useMemo } from 'react';
 import { MapContainer, TileLayer, Marker, Popup, useMap, Polyline, CircleMarker } from 'react-leaflet';
-import { LocationData, PredictionResult, RouteSegment } from '../types';
+import { LocationData, PredictionResult } from '../types';
 import L from 'leaflet';
 
 interface MapComponentProps {
   origin: LocationData | null;
   destination: LocationData | null;
   prediction?: PredictionResult | null;
+  routeCoordinates?: [number, number][];
 }
 
 // Custom DivIcons with better contrast for dark maps
@@ -60,24 +62,26 @@ const createCustomIcon = (color: string, label: string, glowColor: string) => {
 const iconOrigin = createCustomIcon('#10b981', 'A', 'rgba(16, 185, 129, 0.5)'); 
 const iconDest = createCustomIcon('#ef4444', 'B', 'rgba(239, 68, 68, 0.5)');   
 
-function MapUpdater({ origin, destination, prediction }: MapComponentProps) {
+function MapUpdater({ origin, destination, prediction, routeCoordinates }: MapComponentProps) {
   const map = useMap();
 
   useEffect(() => {
-    const timer = setTimeout(() => map.invalidateSize(), 100);
+    const timer = setTimeout(() => map.invalidateSize(), 250);
 
-    if (prediction?.routeCoordinates && prediction.routeCoordinates.length > 0) {
-       const polylineBounds = L.latLngBounds(prediction.routeCoordinates);
-       map.fitBounds(polylineBounds, { padding: [50, 50] });
+    const coords = prediction?.routeCoordinates || routeCoordinates;
+
+    if (coords && coords.length > 0) {
+       const polylineBounds = L.latLngBounds(coords);
+       map.fitBounds(polylineBounds, { padding: [50, 50], animate: true, duration: 1 });
     } else if (origin && destination) {
       const bounds = L.latLngBounds([origin.lat, origin.lon], [destination.lat, destination.lon]);
-      map.fitBounds(bounds, { padding: [50, 50] });
+      map.fitBounds(bounds, { padding: [50, 50], animate: true, duration: 1 });
     } else if (origin) {
-      map.setView([origin.lat, origin.lon], 13); 
+      map.setView([origin.lat, origin.lon], 13, { animate: true }); 
     }
 
     return () => clearTimeout(timer);
-  }, [origin, destination, prediction, map]);
+  }, [origin, destination, prediction, routeCoordinates, map]);
 
   return null;
 }
@@ -92,21 +96,26 @@ const getPathColor = (level?: string) => {
   }
 };
 
-export const MapComponent: React.FC<MapComponentProps> = ({ origin, destination, prediction }) => {
+export const MapComponent: React.FC<MapComponentProps> = ({ origin, destination, prediction, routeCoordinates }) => {
   const defaultCenter: [number, number] = [39.8283, -98.5795]; 
 
   // Logic to split the main route coordinate array into colored segments
   const segments = useMemo(() => {
-    if (!prediction?.routeCoordinates || !prediction.routeSegments) {
-      // If no segments, return one big segment
-      return prediction?.routeCoordinates ? [{
-        positions: prediction.routeCoordinates,
-        color: getPathColor(prediction.congestionLevel),
-        level: prediction.congestionLevel
-      }] : [];
+    const coords = prediction?.routeCoordinates || routeCoordinates;
+
+    if (!coords || coords.length === 0) {
+      return [];
     }
 
-    const coords = prediction.routeCoordinates;
+    if (!prediction?.routeSegments) {
+      // If no segments, return one big segment
+      return [{
+        positions: coords,
+        color: prediction ? getPathColor(prediction.congestionLevel) : '#6366f1',
+        level: prediction?.congestionLevel || 'Unknown'
+      }];
+    }
+
     const totalPoints = coords.length;
     const result = [];
 
@@ -119,17 +128,19 @@ export const MapComponent: React.FC<MapComponentProps> = ({ origin, destination,
       const safeEnd = Math.max(0, Math.min(endIndex, totalPoints));
       
       // We need at least 2 points to draw a line
-      if (safeEnd - safeStart > 1) {
+      if (safeEnd - safeStart > 0) {
         const segmentCoords = coords.slice(safeStart, safeEnd + 1); // +1 to overlap slightly for continuity
-        result.push({
-          positions: segmentCoords,
-          color: getPathColor(seg.congestionLevel),
-          level: seg.congestionLevel
-        });
+        if (segmentCoords.length > 1) {
+          result.push({
+            positions: segmentCoords,
+            color: getPathColor(seg.congestionLevel),
+            level: seg.congestionLevel
+          });
+        }
       }
     }
     return result;
-  }, [prediction]);
+  }, [prediction, routeCoordinates]);
 
   return (
     <div className="h-full w-full relative bg-slate-950">
@@ -145,7 +156,7 @@ export const MapComponent: React.FC<MapComponentProps> = ({ origin, destination,
             url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
         />
         
-        <MapUpdater origin={origin} destination={destination} prediction={prediction} />
+        <MapUpdater origin={origin} destination={destination} prediction={prediction} routeCoordinates={routeCoordinates} />
 
         {segments.map((seg, i) => (
            <React.Fragment key={i}>
@@ -212,24 +223,25 @@ export const MapComponent: React.FC<MapComponentProps> = ({ origin, destination,
         )}
         </MapContainer>
 
-        <div className="absolute bottom-6 right-6 z-[400] bg-slate-900/90 backdrop-blur-md border border-slate-700 p-4 rounded-xl shadow-2xl text-xs text-slate-200">
-            <h4 className="font-bold text-slate-400 mb-3 uppercase tracking-wider text-[10px]">Traffic Heatmap</h4>
+        {/* Responsive Legend: Removed 'hidden xs:block' so it's always visible */}
+        <div className="absolute bottom-6 right-6 z-[400] bg-slate-900/90 backdrop-blur-md border border-slate-700 p-3 md:p-4 rounded-xl shadow-2xl text-xs text-slate-200 block max-w-[150px] md:max-w-none">
+            <h4 className="font-bold text-slate-400 mb-2 md:mb-3 uppercase tracking-wider text-[10px]">Traffic Heatmap</h4>
             <div className="space-y-2">
                 <div className="flex items-center gap-2">
                     <span className="w-2 h-2 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.6)]"></span>
-                    <span className="opacity-80">Fast (Low)</span>
+                    <span className="opacity-80 text-[10px] md:text-xs">Fast</span>
                 </div>
                 <div className="flex items-center gap-2">
                     <span className="w-2 h-2 rounded-full bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.6)]"></span>
-                    <span className="opacity-80">Moderate</span>
+                    <span className="opacity-80 text-[10px] md:text-xs">Moderate</span>
                 </div>
                 <div className="flex items-center gap-2">
                     <span className="w-2 h-2 rounded-full bg-orange-500 shadow-[0_0_8px_rgba(249,115,22,0.6)]"></span>
-                    <span className="opacity-80">Slow (High)</span>
+                    <span className="opacity-80 text-[10px] md:text-xs">Slow</span>
                 </div>
                 <div className="flex items-center gap-2">
                     <span className="w-2 h-2 rounded-full bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.6)]"></span>
-                    <span className="opacity-80">Gridlock (Severe)</span>
+                    <span className="opacity-80 text-[10px] md:text-xs">Severe</span>
                 </div>
             </div>
         </div>
