@@ -1,6 +1,7 @@
+
 import { PredictionResult, ChartPoint, TrafficBreakdown, RouteStats, RouteSegment } from "../types";
 
-const DEFAULT_API_KEY = "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";
+const DEFAULT_API_KEY = "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";
 
 // Helper to ensure we always have chart data
 function generateFallbackChartData(baseLevel: string, startHour: number): ChartPoint[] {
@@ -62,7 +63,10 @@ export async function predictTraffic(
   userApiKey?: string
 ): Promise<PredictionResult> {
   
-  const apiKey = userApiKey && userApiKey.trim() !== "" ? userApiKey : DEFAULT_API_KEY;
+  // Logic: Use user key if provided and not empty. Otherwise use default.
+  const isUsingCustomKey = userApiKey && userApiKey.trim().length > 0;
+  const apiKey = isUsingCustomKey ? userApiKey : DEFAULT_API_KEY;
+  
   const model = "google/gemini-2.0-flash-001"; 
   
   const { context: timeContext, startHour, readableDate } = analyzeTimeContext(datetime);
@@ -147,7 +151,7 @@ export async function predictTraffic(
       method: "POST",
       headers: {
         "Authorization": `Bearer ${apiKey}`,
-        "HTTP-Referer": window.location.href,
+        "HTTP-Referer": window.location.origin, // Dynamic origin for CORS/Referer
         "X-Title": "OmniFlow Traffic App", 
         "Content-Type": "application/json"
       },
@@ -159,9 +163,19 @@ export async function predictTraffic(
 
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}));
-      if (response.status === 402 || response.status === 429 || (errorData.error && errorData.error.code === 402)) {
-        throw new Error("Free limit of day is ended use your own openrouter api");
+      
+      if (response.status === 401) {
+        if (isUsingCustomKey) {
+          throw new Error("Custom API Key Invalid (401). Please check your key and try again.");
+        } else {
+          throw new Error("The default system API key is invalid or expired (401). Please enter your own OpenRouter API Key in the sidebar.");
+        }
       }
+      
+      if (response.status === 402 || response.status === 429 || (errorData.error && errorData.error.code === 402)) {
+        throw new Error("Free limit of day is ended. Please enter your own OpenRouter API key in the sidebar.");
+      }
+      
       throw new Error(`OpenRouter API Error: ${response.status}`);
     }
 

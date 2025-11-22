@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { Calendar, Navigation, MapPin, Search, Crosshair, Key } from 'lucide-react';
+import { Calendar, Navigation, MapPin, Search, Crosshair, Key, Check, Trash2, ShieldCheck, ShieldAlert } from 'lucide-react';
 
 interface SidebarProps {
   onPredict: (origin: string, dest: string, date: string, apiKey?: string) => void;
@@ -13,8 +13,22 @@ export const Sidebar: React.FC<SidebarProps> = ({ onPredict, isLoading, defaultO
   const [origin, setOrigin] = useState('');
   const [dest, setDest] = useState('');
   const [date, setDate] = useState('');
-  const [apiKey, setApiKey] = useState('');
+  
+  // API Key State
+  const [tempKey, setTempKey] = useState('');
+  const [appliedKey, setAppliedKey] = useState('');
   const [showKeyInput, setShowKeyInput] = useState(false);
+
+  // Load saved key from localStorage on mount
+  useEffect(() => {
+    const savedKey = localStorage.getItem('omniflow_api_key');
+    if (savedKey) {
+      setTempKey(savedKey);
+      setAppliedKey(savedKey);
+      // Optionally open the panel so the user knows a custom key is loaded
+      // setShowKeyInput(true); 
+    }
+  }, []);
 
   useEffect(() => {
     if (defaultOrigin) {
@@ -25,9 +39,26 @@ export const Sidebar: React.FC<SidebarProps> = ({ onPredict, isLoading, defaultO
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (origin && dest && date) {
-      onPredict(origin, dest, date, apiKey);
+      // Pass the applied key (or undefined if empty, which triggers default in service)
+      onPredict(origin, dest, date, appliedKey || undefined);
     }
   };
+
+  const handleSaveKey = () => {
+    if (tempKey.trim()) {
+        setAppliedKey(tempKey);
+        localStorage.setItem('omniflow_api_key', tempKey);
+        // Visual feedback could be added here
+    }
+  };
+
+  const handleClearKey = () => {
+    setTempKey('');
+    setAppliedKey('');
+    localStorage.removeItem('omniflow_api_key');
+  };
+
+  const isUsingCustomKey = appliedKey.length > 0;
 
   return (
     <div className="space-y-6">
@@ -89,26 +120,59 @@ export const Sidebar: React.FC<SidebarProps> = ({ onPredict, isLoading, defaultO
           </div>
         </div>
 
-        <div className="pt-2">
+        <div className="pt-2 border-t border-slate-800 mt-4">
            <button 
              type="button"
              onClick={() => setShowKeyInput(!showKeyInput)}
-             className="text-xs text-indigo-400 hover:text-indigo-300 underline flex items-center gap-1 mb-2"
+             className="text-xs text-indigo-400 hover:text-indigo-300 underline flex items-center gap-1 mb-2 w-full justify-between"
            >
-             <Key className="w-3 h-3" />
-             {showKeyInput ? "Hide API Key Settings" : "Have your own OpenRouter Key?"}
+             <div className="flex items-center gap-1">
+               <Key className="w-3 h-3" />
+               {showKeyInput ? "Hide API Key Settings" : "Configure API Key"}
+             </div>
+             <span className={`text-[10px] px-2 py-0.5 rounded-full flex items-center gap-1 ${isUsingCustomKey ? 'bg-emerald-500/20 text-emerald-400' : 'bg-slate-700 text-slate-400'}`}>
+                {isUsingCustomKey ? <ShieldCheck className="w-3 h-3" /> : <ShieldAlert className="w-3 h-3" />}
+                {isUsingCustomKey ? 'Custom Key Active' : 'Using Default Key'}
+             </span>
            </button>
            
            {showKeyInput && (
-             <div className="space-y-1 animate-fade-in">
-                <input
-                  type="password"
-                  value={apiKey}
-                  onChange={(e) => setApiKey(e.target.value)}
-                  placeholder="sk-or-..."
-                  className="w-full rounded-lg border border-slate-700 bg-slate-900/50 py-2 px-3 text-sm text-white placeholder-slate-600 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                />
-                <p className="text-[10px] text-slate-500">Leave empty to use the shared default key.</p>
+             <div className="space-y-2 animate-fade-in bg-slate-900/50 p-3 rounded-lg border border-slate-800">
+                <div className="flex gap-2">
+                  <input
+                    type="password"
+                    value={tempKey}
+                    onChange={(e) => setTempKey(e.target.value)}
+                    placeholder="sk-or-..."
+                    className="flex-1 rounded-md border border-slate-700 bg-slate-950 py-1.5 px-3 text-sm text-white placeholder-slate-600 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                  />
+                  {tempKey !== appliedKey || !isUsingCustomKey ? (
+                     <button
+                       type="button"
+                       onClick={handleSaveKey}
+                       className="bg-indigo-600 hover:bg-indigo-500 text-white px-3 rounded-md text-xs font-medium transition-colors"
+                     >
+                       Save
+                     </button>
+                  ) : (
+                     <button
+                       type="button"
+                       onClick={handleClearKey}
+                       className="bg-red-500/20 hover:bg-red-500/30 text-red-400 border border-red-500/30 px-2 rounded-md transition-colors"
+                       title="Clear Custom Key"
+                     >
+                       <Trash2 className="w-4 h-4" />
+                     </button>
+                  )}
+                </div>
+                <div className="flex items-center justify-between">
+                    <p className="text-[10px] text-slate-500 leading-tight max-w-[85%]">
+                    {isUsingCustomKey 
+                        ? "Your custom key is saved locally." 
+                        : "Using default shared key. If 401/429 errors occur, enter your own OpenRouter key."}
+                    </p>
+                    {isUsingCustomKey && <Check className="w-3 h-3 text-emerald-500" />}
+                </div>
              </div>
            )}
         </div>
