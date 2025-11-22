@@ -1,0 +1,7 @@
+{
+  "name": "OmniFlow Traffic Predictor",
+  "description": "Advanced AI-powered traffic prediction system utilizing Google Gemini 2.5, Google Maps Grounding, and real-time weather/event analysis to forecast travel times and congestion.",
+  "requestFramePermissions": [
+    "geolocation"
+  ]
+}
