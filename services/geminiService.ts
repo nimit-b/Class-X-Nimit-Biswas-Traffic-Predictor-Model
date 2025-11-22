@@ -1,7 +1,7 @@
 
 import { PredictionResult, ChartPoint, TrafficBreakdown, RouteStats, RouteSegment } from "../types";
 
-const DEFAULT_API_KEY = "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";
+const DEFAULT_API_KEY = "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";
 
 // Helper to ensure we always have chart data
 function generateFallbackChartData(baseLevel: string, startHour: number): ChartPoint[] {
@@ -127,7 +127,7 @@ export async function predictTraffic(
     {
       "travelTime": "e.g. 1 hr 15 mins",
       "congestionLevel": "Low" | "Moderate" | "High" | "Severe",
-      "summary": "### 📅 Date Context: Christmas Day ... \n\n ### 🚦 Verdict: ... \n\n ### 📍 Analysis ...",
+      "summary": "### 📅 Date Context: Christmas Day ... \n\n ### 🚦 Verdict: ... \n\n ### 📍 Analysis ... \n\n ### Temperature Could expectedly be xxC or yyF",
       "routeSegments": [
         { "segmentId": 1, "startPercentage": 0, "endPercentage": 30, "congestionLevel": "High" },
         { "segmentId": 2, "startPercentage": 30, "endPercentage": 100, "congestionLevel": "Low" }
