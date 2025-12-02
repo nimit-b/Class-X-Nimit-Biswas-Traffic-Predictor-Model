@@ -1,1 +1,20 @@
-Omni Flow: AI-Powered Traffic Predictor 🚦The Omni Flow Traffic Predictor is an intelligent web application built using Next.js that forecasts traffic flow and density for urban environments. It leverages the power of a large language model (LLM) via an API to analyze complex data sets and provide insightful, real-time traffic predictions, aiding urban planning and commuter route optimization.✨ FeaturesAI-Driven Prediction: Utilizes a powerful Generative AI API for sophisticated pattern recognition and traffic forecasting based on historical and simulated data.Intuitive Visualization: Presents complex traffic data in an easy-to-understand web interface.Scalable Architecture: Built with Next.js for modern, high-performance web delivery.💻 Technical StackComponentPurposeFrontend/FrameworkNext.js (React)AI ModelLarge Language Model (via API)Package ManagernpmLanguageJavaScript/TypeScript
+<div align="center">
+<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
+</div>
+
+# Run and deploy your AI Studio app
+
+This contains everything you need to run your app locally.
+
+View your app in AI Studio: https://ai.studio/apps/drive/1r00L1zAUQJMmNNF67I3nXSb0jVe1B1m2
+
+## Run Locally
+
+**Prerequisites:**  Node.js
+
+
+1. Install dependencies:
+   `npm install`
+2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
+3. Run the app:
+   `npm run dev`

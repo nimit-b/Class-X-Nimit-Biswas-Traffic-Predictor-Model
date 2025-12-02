@@ -1,7 +1,7 @@
 import React from 'react';
 import { PredictionResult } from '../types';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
-import { Clock, Info, AlertTriangle, Map, ShieldCheck, Zap, TrendingUp, Share2, Copy, CloudRain, Wind, Thermometer, Sun, Navigation, Activity } from 'lucide-react';
+import { Clock, Info, AlertTriangle, Map, ShieldCheck, Zap, TrendingUp, Share2, Copy, CloudRain, Wind, Thermometer, Sun, Navigation, Activity, Leaf, Droplets } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 
 interface ResultsPanelProps {
@@ -29,6 +29,27 @@ export const ResultsPanel: React.FC<ResultsPanelProps> = ({ prediction }) => {
     navigator.clipboard.writeText(`OmniFlow Traffic Report:\n${prediction.travelTimeEstimate} - ${prediction.congestionLevel} Traffic\n\n${prediction.summary.substring(0, 200)}...`);
     alert("Report copied to clipboard.");
   };
+
+  // --- Eco Calculations ---
+  // Average car emits ~120g CO2 per km. Idling/Congestion increases this.
+  // Average fuel consumption ~8L/100km.
+  const calculateEcoStats = () => {
+      if (!prediction.routeStats) return null;
+      
+      const km = prediction.routeStats.distanceMeters / 1000;
+      let congestionMultiplier = 1.0;
+      if (prediction.congestionLevel === 'Moderate') congestionMultiplier = 1.15;
+      if (prediction.congestionLevel === 'High') congestionMultiplier = 1.4;
+      if (prediction.congestionLevel === 'Severe') congestionMultiplier = 1.8;
+
+      const co2 = (km * 0.12 * congestionMultiplier).toFixed(1); // kg
+      const fuel = ((km / 100) * 8 * congestionMultiplier).toFixed(1); // Liters
+      const cost = (parseFloat(fuel) * 1.05).toFixed(2); // Avg $1.05 per liter (approx)
+
+      return { co2, fuel, cost };
+  };
+
+  const ecoStats = calculateEcoStats();
 
   return (
     <div className="mt-8 animate-fade-in space-y-6 pb-24 border-t border-slate-800/60 pt-6">
@@ -112,6 +133,33 @@ export const ResultsPanel: React.FC<ResultsPanelProps> = ({ prediction }) => {
             <div className="text-xl font-bold text-white">{prediction.confidenceScore || 85}%</div>
         </div>
       </div>
+
+      {/* Eco Impact Card (New Feature) */}
+      {ecoStats && (
+        <div className="rounded-xl border border-emerald-900/30 bg-emerald-900/10 p-4 relative overflow-hidden">
+             <div className="absolute top-0 right-0 p-3 opacity-5">
+                 <Leaf className="w-20 h-20 text-emerald-400" />
+             </div>
+             <div className="flex items-center gap-2 text-emerald-400 mb-4 border-b border-emerald-800/30 pb-2">
+                <Leaf className="w-4 h-4" />
+                <span className="text-[10px] font-bold uppercase tracking-wider">Eco-Trip Analysis</span>
+             </div>
+             <div className="grid grid-cols-3 gap-2 divide-x divide-emerald-800/30 text-center relative z-10">
+                <div className="flex flex-col items-center">
+                    <span className="text-lg font-bold text-white">{ecoStats.co2}</span>
+                    <span className="text-[10px] text-emerald-400/80 uppercase">kg CO₂</span>
+                </div>
+                <div className="flex flex-col items-center">
+                    <span className="text-lg font-bold text-white">{ecoStats.fuel}</span>
+                    <span className="text-[10px] text-emerald-400/80 uppercase">Liters Fuel</span>
+                </div>
+                <div className="flex flex-col items-center">
+                    <span className="text-lg font-bold text-white">${ecoStats.cost}</span>
+                    <span className="text-[10px] text-emerald-400/80 uppercase">Est. Cost</span>
+                </div>
+            </div>
+        </div>
+      )}
 
       {/* Weather Card */}
       {prediction.detailedWeather && (

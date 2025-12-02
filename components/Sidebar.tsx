@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Calendar, Navigation, MapPin, Search, Crosshair, Server, ChevronDown, Key, Save, Trash2, CheckCircle2, AlertCircle, RotateCcw, Settings2 } from 'lucide-react';
+import { Calendar, Navigation, MapPin, Search, Crosshair, Server, ChevronDown, Key, Save, Trash2, CheckCircle2, AlertCircle, RotateCcw, Settings2, History, Clock } from 'lucide-react';
 
 interface SidebarProps {
   onPredict: (origin: string, dest: string, date: string, apiKey?: string, provider?: string) => void;
@@ -10,11 +10,18 @@ interface SidebarProps {
 
 type ApiProvider = 'openrouter' | 'openai' | 'gemini';
 
+interface HistoryItem {
+  origin: string;
+  dest: string;
+  timestamp: number;
+}
+
 export const Sidebar: React.FC<SidebarProps> = ({ onPredict, isLoading, defaultOrigin, onLocateMe }) => {
   const [origin, setOrigin] = useState('');
   const [dest, setDest] = useState('');
+  const [history, setHistory] = useState<HistoryItem[]>([]);
   
-  // Initialize date with current local time in format YYYY-MM-DDTHH:mm
+  // Initialize date with current local time
   const [date, setDate] = useState(() => {
     const now = new Date();
     now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
@@ -27,15 +34,21 @@ export const Sidebar: React.FC<SidebarProps> = ({ onPredict, isLoading, defaultO
   const [appliedKey, setAppliedKey] = useState('');
   const [showKeyInput, setShowKeyInput] = useState(false);
 
-  // Load saved configuration on mount
+  // Load saved configuration and history
   useEffect(() => {
     const savedKey = localStorage.getItem('omniflow_api_key');
     const savedProvider = localStorage.getItem('omniflow_provider') as ApiProvider;
+    const savedHistory = localStorage.getItem('omniflow_history');
     
     if (savedProvider) setProvider(savedProvider);
     if (savedKey) {
       setTempKey(savedKey);
       setAppliedKey(savedKey);
+    }
+    if (savedHistory) {
+      try {
+        setHistory(JSON.parse(savedHistory));
+      } catch (e) { console.error("History parse failed"); }
     }
   }, []);
 
@@ -45,11 +58,26 @@ export const Sidebar: React.FC<SidebarProps> = ({ onPredict, isLoading, defaultO
     }
   }, [defaultOrigin]);
 
+  const addToHistory = (org: string, dst: string) => {
+     const newItem: HistoryItem = { origin: org, dest: dst, timestamp: Date.now() };
+     // Remove duplicate if exists and add to top
+     const filtered = history.filter(h => !(h.origin === org && h.dest === dst));
+     const newHistory = [newItem, ...filtered].slice(0, 3); // Keep max 3
+     setHistory(newHistory);
+     localStorage.setItem('omniflow_history', JSON.stringify(newHistory));
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (origin && dest && date) {
+      addToHistory(origin, dest);
       onPredict(origin, dest, date, appliedKey || undefined, provider);
     }
+  };
+
+  const handleHistoryClick = (item: HistoryItem) => {
+    setOrigin(item.origin);
+    setDest(item.dest);
   };
 
   const handleSaveKey = () => {
@@ -128,6 +156,23 @@ export const Sidebar: React.FC<SidebarProps> = ({ onPredict, isLoading, defaultO
             />
           </div>
         </div>
+
+        {/* History Quick Select */}
+        {history.length > 0 && (
+          <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-none">
+            {history.map((h, i) => (
+               <button 
+                 key={i}
+                 type="button"
+                 onClick={() => handleHistoryClick(h)}
+                 className="flex items-center gap-1.5 whitespace-nowrap px-3 py-1.5 rounded-full bg-slate-800/50 border border-slate-700 text-[10px] text-slate-400 hover:bg-slate-800 hover:text-indigo-300 transition-colors"
+               >
+                 <Clock className="w-3 h-3" />
+                 {h.dest.substring(0, 15)}{h.dest.length > 15 ? '...' : ''}
+               </button>
+            ))}
+          </div>
+        )}
 
         {/* Date Input */}
         <div className="space-y-1.5">

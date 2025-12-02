@@ -1,8 +1,8 @@
-
-import React, { useEffect, useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { MapContainer, TileLayer, Marker, Popup, useMap, Polyline, CircleMarker } from 'react-leaflet';
 import { LocationData, PredictionResult } from '../types';
 import L from 'leaflet';
+import { Layers } from 'lucide-react';
 
 interface MapComponentProps {
   origin: LocationData | null;
@@ -96,8 +96,12 @@ const getPathColor = (level?: string) => {
   }
 };
 
+type MapStyle = 'dark' | 'light' | 'satellite';
+
 export const MapComponent: React.FC<MapComponentProps> = ({ origin, destination, prediction, routeCoordinates }) => {
   const defaultCenter: [number, number] = [39.8283, -98.5795]; 
+  const [mapStyle, setMapStyle] = useState<MapStyle>('dark');
+  const [showStyleMenu, setShowStyleMenu] = useState(false);
 
   // Logic to split the main route coordinate array into colored segments
   const segments = useMemo(() => {
@@ -123,13 +127,11 @@ export const MapComponent: React.FC<MapComponentProps> = ({ origin, destination,
       const startIndex = Math.floor((seg.startPercentage / 100) * totalPoints);
       const endIndex = Math.floor((seg.endPercentage / 100) * totalPoints);
       
-      // Ensure valid slice indices
       const safeStart = Math.max(0, Math.min(startIndex, totalPoints - 1));
       const safeEnd = Math.max(0, Math.min(endIndex, totalPoints));
       
-      // We need at least 2 points to draw a line
       if (safeEnd - safeStart > 0) {
-        const segmentCoords = coords.slice(safeStart, safeEnd + 1); // +1 to overlap slightly for continuity
+        const segmentCoords = coords.slice(safeStart, safeEnd + 1); 
         if (segmentCoords.length > 1) {
           result.push({
             positions: segmentCoords,
@@ -142,25 +144,84 @@ export const MapComponent: React.FC<MapComponentProps> = ({ origin, destination,
     return result;
   }, [prediction, routeCoordinates]);
 
+  // Tile Layer URLs
+  const getTileLayer = () => {
+    if (mapStyle === 'light') {
+       return (
+         <TileLayer
+           attribution='&copy; <a href="https://carto.com/">CARTO</a>'
+           url="https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png"
+         />
+       );
+    }
+    if (mapStyle === 'satellite') {
+       return (
+         <TileLayer
+           attribution='Tiles &copy; Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community'
+           url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
+         />
+       );
+    }
+    // Default Dark
+    return (
+      <TileLayer
+          attribution='&copy; <a href="https://carto.com/attributions">CARTO</a>'
+          url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
+      />
+    );
+  };
+
   return (
-    <div className="h-full w-full relative bg-slate-950">
+    <div className="h-full w-full relative bg-slate-950 group">
+        
+        {/* Map Style Toggle */}
+        <div className="absolute top-4 right-4 z-[400] flex flex-col items-end">
+           <button 
+             onClick={() => setShowStyleMenu(!showStyleMenu)}
+             className="bg-slate-900/90 text-slate-200 p-2 rounded-lg border border-slate-700 hover:bg-slate-800 shadow-lg"
+             title="Change Map Style"
+           >
+             <Layers className="w-5 h-5" />
+           </button>
+           
+           {showStyleMenu && (
+             <div className="mt-2 bg-slate-900/95 backdrop-blur border border-slate-700 rounded-lg shadow-xl overflow-hidden flex flex-col w-32 animate-in fade-in slide-in-from-top-2">
+                <button 
+                  onClick={() => { setMapStyle('dark'); setShowStyleMenu(false); }}
+                  className={`px-3 py-2 text-xs text-left hover:bg-slate-800 ${mapStyle === 'dark' ? 'text-indigo-400 font-bold' : 'text-slate-300'}`}
+                >
+                  Dark Mode
+                </button>
+                <button 
+                  onClick={() => { setMapStyle('light'); setShowStyleMenu(false); }}
+                  className={`px-3 py-2 text-xs text-left hover:bg-slate-800 ${mapStyle === 'light' ? 'text-indigo-400 font-bold' : 'text-slate-300'}`}
+                >
+                  Light Mode
+                </button>
+                <button 
+                  onClick={() => { setMapStyle('satellite'); setShowStyleMenu(false); }}
+                  className={`px-3 py-2 text-xs text-left hover:bg-slate-800 ${mapStyle === 'satellite' ? 'text-indigo-400 font-bold' : 'text-slate-300'}`}
+                >
+                  Satellite
+                </button>
+             </div>
+           )}
+        </div>
+
         <MapContainer 
           center={defaultCenter} 
           zoom={4} 
-          style={{ height: '100%', width: '100%', background: '#020617' }} 
+          style={{ height: '100%', width: '100%', background: mapStyle === 'light' ? '#e2e8f0' : '#020617' }} 
           className="z-0"
         >
-        {/* Carto Dark Matter for High Contrast */}
-        <TileLayer
-            attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>'
-            url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
-        />
+        
+        {getTileLayer()}
         
         <MapUpdater origin={origin} destination={destination} prediction={prediction} routeCoordinates={routeCoordinates} />
 
         {segments.map((seg, i) => (
            <React.Fragment key={i}>
-             {/* Glow Effect (Wider, transparent line underneath) */}
+             {/* Glow Effect */}
              <Polyline 
                positions={seg.positions}
                pathOptions={{ 
@@ -185,9 +246,7 @@ export const MapComponent: React.FC<MapComponentProps> = ({ origin, destination,
            </React.Fragment>
         ))}
 
-        {/* Render Hotspots only on High/Severe segments */}
         {segments.filter(s => s.level === 'High' || s.level === 'Severe').map((seg, i) => {
-             // Pick the middle point of the segment for a marker
              const midPoint = seg.positions[Math.floor(seg.positions.length / 2)];
              return (
                <CircleMarker 
@@ -223,7 +282,7 @@ export const MapComponent: React.FC<MapComponentProps> = ({ origin, destination,
         )}
         </MapContainer>
 
-        {/* Responsive Legend: Removed 'hidden xs:block' so it's always visible */}
+        {/* Responsive Legend */}
         <div className="absolute bottom-6 right-6 z-[400] bg-slate-900/90 backdrop-blur-md border border-slate-700 p-3 md:p-4 rounded-xl shadow-2xl text-xs text-slate-200 block max-w-[150px] md:max-w-none">
             <h4 className="font-bold text-slate-400 mb-2 md:mb-3 uppercase tracking-wider text-[10px]">Traffic Heatmap</h4>
             <div className="space-y-2">

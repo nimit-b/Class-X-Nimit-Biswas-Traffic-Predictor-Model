@@ -1,7 +1,7 @@
 
 import { PredictionResult, ChartPoint, RouteStats, RouteComposition, DetailedWeather } from "../types";
 
-const DEFAULT_OPENROUTER_KEY = "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";
+const DEFAULT_OPENROUTER_KEY = "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";
 
 function generateFallbackChartData(baseLevel: string, startHour: number): ChartPoint[] {
   const baseValue = baseLevel === 'Severe' ? 90 : baseLevel === 'High' ? 75 : baseLevel === 'Moderate' ? 50 : 20;
